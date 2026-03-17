@@ -1,0 +1,5 @@
+- [x] Optimizar sistema de partículas con caché de snapshots/partículas base
+- [x] Mejorar efectos de integración/desintegración para texto e imágenes
+- [x] Añadir control de pausa/reanudación cuando la pestaña no está visible
+- [x] Limpiar lógica innecesaria para reducir trabajo en runtime
+- [x] Verificar secuencia final de animaciones
