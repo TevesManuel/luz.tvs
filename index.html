@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Disintegration</title>
+
+<!-- Roboto -->
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@700&display=swap" rel="stylesheet">
+
+<!-- html2canvas -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+<style>
+body {
+    margin: 0;
+    overflow: hidden;
+    background: linear-gradient(135deg, #ff4b5c, #ff1e56) !important;
+}
+
+/* texto */
+#text {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'Roboto', sans-serif;
+    font-weight: 700;
+    font-size: 90px;
+    color: white;
+    text-align: center;
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* imagen */
+img {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 300px;
+    opacity: 0;
+    transition: 0.8s;
+    z-index: 1;
+}
+
+/* canvas de partículas */
+#canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+}
+</style>
+</head>
+<body>
+
+<canvas id="canvas" style="background: linear-gradient(135deg, #ff4b5c, #ff1e56) !important;"></canvas>
+<div id="text" data-dis-id="text"></div>
+<img id="img1" data-dis-id="img1" src="image1.png">
+<img id="img2" data-dis-id="img2" src="image2.png">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+const disintegrate = (function() {
+    const disObjs = new Map();
+    const PIECE_SIZE = 26; // mayor tamaño = menos piezas / mejor rendimiento
+    const PARTICLE_SPREAD = 240;
+    let particles = [];
+
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (const p of particles) {
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = p.alpha;
+            ctx.fillRect(p.x, p.y, p.size, p.size);
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    function wait(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function dispatchComplete(el) {
+        el.dispatchEvent(new CustomEvent('disComplete', { bubbles: true }));
+    }
+
+    async function getElementSnapshot(el) {
+        return html2canvas(el, {
+            scale: 1,
+            useCORS: true,
+            backgroundColor: null
+        });
+    }
+
+    function createParticlesFromCanvas(canvasSnapshot, rect) {
+        const off = document.createElement('canvas');
+        off.width = canvasSnapshot.width;
+        off.height = canvasSnapshot.height;
+        const offCtx = off.getContext('2d');
+        offCtx.drawImage(canvasSnapshot, 0, 0);
+
+        const img = offCtx.getImageData(0, 0, off.width, off.height);
+        const newParticles = [];
+
+        for (let y = 0; y < off.height; y += PIECE_SIZE) {
+            for (let x = 0; x < off.width; x += PIECE_SIZE) {
+                const idx = (y * off.width + x) * 4;
+                const alpha = img.data[idx + 3];
+                if (alpha < 15) continue;
+
+                const r = img.data[idx];
+                const g = img.data[idx + 1];
+                const b = img.data[idx + 2];
+
+                newParticles.push({
+                    x: rect.left + x,
+                    y: rect.top + y,
+                    ox: rect.left + x,
+                    oy: rect.top + y,
+                    size: PIECE_SIZE,
+                    color: `rgba(${r},${g},${b},${alpha / 255})`,
+                    alpha: 1
+                });
+            }
+        }
+
+        return newParticles;
+    }
+
+    async function animateParticles(fromParticles, toParticles, duration = 1.2) {
+        if (!Array.isArray(fromParticles) || fromParticles.length === 0) {
+            return;
+        }
+
+        particles = fromParticles;
+        return new Promise(resolve => {
+            gsap.to(particles, {
+                duration,
+                x: (i) => toParticles[i]?.x ?? particles[i].x,
+                y: (i) => toParticles[i]?.y ?? particles[i].y,
+                alpha: (i) => toParticles[i]?.alpha ?? particles[i].alpha,
+                ease: 'power3.out',
+                onUpdate: draw,
+                onComplete: resolve
+            });
+        });
+    }
+
+    async function disintegrate(el) {
+        const rect = el.getBoundingClientRect();
+        const snapshot = await getElementSnapshot(el);
+        const baseParticles = createParticlesFromCanvas(snapshot, rect);
+
+        const targetParticles = baseParticles.map(p => ({
+            x: p.ox + (Math.random() - 0.5) * PARTICLE_SPREAD,
+            y: p.oy + (Math.random() - 0.5) * PARTICLE_SPREAD,
+            alpha: 0
+        }));
+
+        el.style.opacity = 0;
+        await wait(80);
+        await animateParticles(baseParticles, targetParticles);
+        particles = [];
+        draw();
+        dispatchComplete(el);
+    }
+
+    async function integrate(el) {
+        const rect = el.getBoundingClientRect();
+        const snapshot = await getElementSnapshot(el);
+        const baseParticles = createParticlesFromCanvas(snapshot, rect);
+
+        const startParticles = baseParticles.map(p => ({
+            x: p.ox + (Math.random() - 0.5) * PARTICLE_SPREAD,
+            y: p.oy + (Math.random() - 0.5) * PARTICLE_SPREAD,
+            alpha: 0,
+            size: p.size,
+            color: p.color,
+            ox: p.ox,
+            oy: p.oy
+        }));
+
+        el.style.opacity = 0;
+        particles = startParticles;
+        draw();
+
+        await animateParticles(startParticles, baseParticles);
+        el.style.opacity = 1;
+        particles = [];
+        draw();
+        dispatchComplete(el);
+    }
+
+    function register(el) {
+        if (disObjs.has(el)) return disObjs.get(el);
+
+        const container = document.createElement('div');
+        container.className = 'dis-container';
+        el.parentNode.insertBefore(container, el);
+        container.appendChild(el);
+
+        const disObj = { elem: el, container, disintegrate: () => disintegrate(el), integrate: () => integrate(el) };
+        disObjs.set(el, disObj);
+
+        const observer = new MutationObserver(() => {
+            if (container.classList.contains('animate')) {
+                disintegrate(el).finally(() => {
+                    container.classList.remove('animate');
+                });
+            }
+        });
+
+        observer.observe(container, { attributes: true, attributeFilter: ['class'] });
+        return disObj;
+    }
+
+    function init() {
+        resizeCanvas();
+        draw();
+
+        const elements = document.querySelectorAll('[data-dis-id]');
+        elements.forEach(register);
+
+        window.dispatchEvent(new Event('disesLoaded'));
+    }
+
+    function getDisObj(el) {
+        if (typeof el === 'string') el = document.querySelector(`[data-dis-id="${el}"]`);
+        return disObjs.get(el) || null;
+    }
+
+    window.addEventListener('resize', () => {
+        resizeCanvas();
+        draw();
+    });
+
+    return { init, getDisObj, disintegrate, integrate };
+})();
+
+const TEXTS = [
+    "FOR MY BEAUTIFUL ING",
+    "I LOVE YOU SO MUCH"
+];
+
+// Inicializa al cargar la página
+window.addEventListener('load', async () => {
+    disintegrate.init();
+
+    const textEl = document.getElementById('text');
+    const img1 = document.getElementById('img1');
+    const img2 = document.getElementById('img2');
+
+    const disText = disintegrate.getDisObj(textEl);
+    const disImg1 = disintegrate.getDisObj(img1);
+    const disImg2 = disintegrate.getDisObj(img2);
+
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+
+    while (true) {
+        textEl.innerText = TEXTS[0];
+        await disText.integrate();
+        await wait(1200);
+        await disText.disintegrate();
+        await wait(400);
+
+        await disImg1.integrate();
+        await wait(1200);
+        await disImg1.disintegrate();
+        await wait(400);
+
+        textEl.innerText = TEXTS[1];
+        await disText.integrate();
+        await wait(1200);
+        await disText.disintegrate();
+        await wait(400);
+
+        await disImg2.integrate();
+        await wait(1200);
+        await disImg2.disintegrate();
+        await wait(400);
+    }
+});
+</script>
+
+</body>
+</html>
