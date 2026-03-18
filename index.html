@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>M + L oo</title>
-
   <style>
     html, body {
       margin: 0;
@@ -13,43 +12,23 @@
       overflow: hidden;
       background: linear-gradient(135deg, #ff4b5c, #ff1e56);
     }
-
     #webgl {
       position: fixed;
       inset: 0;
       width: 100%;
       height: 100%;
-      pointer-events: none;
-      z-index: 1;
       display: block;
-    }
-
-    /* ocultas, solo para cargar recursos */
-    #img1, #img2 {
-      position: fixed;
-      width: 1px;
-      height: 1px;
-      opacity: 0;
-      pointer-events: none;
-      left: -9999px;
-      top: -9999px;
     }
   </style>
 </head>
 <body>
   <canvas id="webgl"></canvas>
-  <img id="img1" src="image1.png" alt="image1" />
-  <img id="img2" src="image2.png" alt="image2" />
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 
   <script>
     const canvas = document.getElementById('webgl');
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 2500);
-    camera.position.z = 520;
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
@@ -60,24 +39,33 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.15));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-    dir.position.set(0.3, 1, 1);
-    scene.add(dir);
+    const scene = new THREE.Scene();
 
-    let currentGroup = null;
-    let busy = false;
-    let pageVisible = !document.hidden;
+    const camera = new THREE.OrthographicCamera(
+      window.innerWidth / -2,
+      window.innerWidth / 2,
+      window.innerHeight / 2,
+      window.innerHeight / -2,
+      1,
+      4000
+    );
+    camera.position.z = 2000;
 
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const TEXTS = ["FOR MY BEAUTIFUL ING", "I LOVE YOU SO MUCH"];
-    const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
+    let pageVisible = !document.hidden;
     document.addEventListener('visibilitychange', () => {
       pageVisible = !document.hidden;
     });
 
     window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.left = window.innerWidth / -2;
+      camera.right = window.innerWidth / 2;
+      camera.top = window.innerHeight / 2;
+      camera.bottom = window.innerHeight / -2;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
@@ -86,239 +74,231 @@
       return min + Math.random() * (max - min);
     }
 
-    function clearCurrentGroup() {
-      if (!currentGroup) return;
-      scene.remove(currentGroup);
-      currentGroup.traverse(obj => {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) obj.material.dispose();
-      });
-      currentGroup = null;
+    function makeRenderTexture(drawFn, width, height) {
+      const cnv = document.createElement('canvas');
+      cnv.width = width;
+      cnv.height = height;
+      const ctx = cnv.getContext('2d');
+      drawFn(ctx, width, height);
+      return { canvas: cnv, ctx };
     }
 
-    function createVoxelLetter(char, xOffset) {
-      const group = new THREE.Group();
-      const size = 4.2;
-      const depth = 3.2;
-      const cols = 5;
-      const rows = 7;
-      const gap = 0.9;
+    function makeTextCanvas(text, w = 1400, h = 340) {
+      return makeRenderTexture((ctx, width, height) => {
+        ctx.clearRect(0, 0, width, height);
+        ctx.font = '700 140px Roboto, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = 'rgba(0,0,0,0.25)';
+        ctx.shadowBlur = 16;
+        ctx.fillText(text, width / 2, height / 2);
+      }, w, h);
+    }
 
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        roughness: 0.3,
-        metalness: 0.45,
+    function loadImageCanvas(src, maxW = 520, maxH = 520) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const ratio = Math.min(maxW / img.width, maxH / img.height, 1);
+          const w = Math.max(1, Math.floor(img.width * ratio));
+          const h = Math.max(1, Math.floor(img.height * ratio));
+
+          const data = makeRenderTexture((ctx) => {
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+          }, w, h);
+
+          resolve(data);
+        };
+        img.onerror = reject;
+        img.src = src;
+      });
+    }
+
+    function buildParticleObjectFromCanvas(srcCanvas, opts = {}) {
+      const step = opts.step ?? 6;
+      const alphaMin = opts.alphaMin ?? 16;
+      const spreadZ = opts.spreadZ ?? 12;
+      const maxParticles = opts.maxParticles ?? 4500;
+      const scale = opts.scale ?? 1.0;
+      const colorBoost = opts.colorBoost ?? 1.0;
+
+      const width = srcCanvas.width;
+      const height = srcCanvas.height;
+
+      const off = document.createElement('canvas');
+      off.width = width;
+      off.height = height;
+      const offCtx = off.getContext('2d');
+      offCtx.drawImage(srcCanvas, 0, 0);
+
+      const data = offCtx.getImageData(0, 0, width, height).data;
+
+      const positions = [];
+      const colors = [];
+      const sizes = [];
+      const home = [];
+
+      let count = 0;
+      for (let y = 0; y < height; y += step) {
+        for (let x = 0; x < width; x += step) {
+          const idx = (y * width + x) * 4;
+          const a = data[idx + 3];
+          if (a < alphaMin) continue;
+
+          const r = Math.min(255, data[idx] * colorBoost);
+          const g = Math.min(255, data[idx + 1] * colorBoost);
+          const b = Math.min(255, data[idx + 2] * colorBoost);
+
+          const wx = (x - width / 2) * scale;
+          const wy = (height / 2 - y) * scale;
+          const wz = randomRange(-spreadZ, spreadZ);
+
+          positions.push(wx, wy, wz);
+          home.push(wx, wy, wz);
+
+          colors.push(r / 255, g / 255, b / 255);
+          sizes.push(step * scale * randomRange(3.2, 4.8));
+
+          count++;
+          if (count >= maxParticles) break;
+        }
+        if (count >= maxParticles) break;
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+      const material = new THREE.ShaderMaterial({
         transparent: true,
-        opacity: 1
+        depthTest: true,
+        depthWrite: false,
+        vertexColors: true,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.5) }
+        },
+        vertexShader: `
+          uniform float uPixelRatio;
+          attribute float size;
+          varying vec3 vColor;
+          void main() {
+            vColor = color;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = size * uPixelRatio * (520.0 / -mvPosition.z);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          void main() {
+            vec2 c = gl_PointCoord - vec2(0.5);
+            float d = length(c);
+            if (d > 0.5) discard;
+            float alpha = smoothstep(0.5, 0.05, d);
+            gl_FragColor = vec4(vColor, alpha);
+          }
+        `
       });
 
-      const geo = new THREE.BoxGeometry(size, size, depth);
+      const points = new THREE.Points(geometry, material);
+      points.userData.home = home.slice();
 
-      // patrón pseudo tipográfico por letra (determinístico simple)
-      const seed = char.charCodeAt(0) || 65;
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          const v = ((x * 17 + y * 31 + seed * 13) % 100);
-          const keep = y === 0 || y === rows - 1 || x === 0 || x === cols - 1 || v > 55;
-          if (!keep) continue;
-          if (Math.random() < 0.12) continue;
-
-          const cube = new THREE.Mesh(geo, mat.clone());
-          cube.position.set(
-            xOffset + (x - (cols - 1) / 2) * (size + gap),
-            ((rows - 1) / 2 - y) * (size + gap),
-            randomRange(-1.8, 1.8)
-          );
-          cube.userData.home = cube.position.clone();
-          group.add(cube);
-        }
-      }
-      return group;
+      return points;
     }
 
-    function createTextGroup(text) {
-      const group = new THREE.Group();
-      const letterAdvance = 30;
-      const startX = -((text.length - 1) * letterAdvance) / 2;
+    function animateIntegrate(points, duration = 1.1) {
+      const pos = points.geometry.attributes.position.array;
+      const home = points.userData.home;
+      const state = { t: 0 };
 
-      for (let i = 0; i < text.length; i++) {
-        const ch = text[i];
-        if (ch === ' ') continue;
-        const letter = createVoxelLetter(ch, startX + i * letterAdvance);
-        group.add(letter);
-      }
-
-      return group;
-    }
-
-    function createImageGroup(imgEl) {
-      const texture = new THREE.TextureLoader().load(imgEl.src);
-      const planeW = 280;
-      const planeH = 280;
-      const cols = 28;
-      const rows = 28;
-      const pieceW = planeW / cols;
-      const pieceH = planeH / rows;
-
-      const group = new THREE.Group();
-
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-          if (Math.random() < 0.2) continue;
-
-          const geo = new THREE.PlaneGeometry(pieceW, pieceH);
-          const mat = new THREE.MeshBasicMaterial({
-            map: texture,
-            transparent: true,
-            side: THREE.DoubleSide
-          });
-
-          mat.map.repeat.set(1 / cols, 1 / rows);
-          mat.map.offset.set(x / cols, 1 - (y + 1) / rows);
-
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.position.set(
-            -planeW / 2 + x * pieceW + pieceW / 2,
-            planeH / 2 - y * pieceH - pieceH / 2,
-            0
-          );
-          mesh.userData.home = mesh.position.clone();
-          group.add(mesh);
-        }
+      const start = new Float32Array(pos.length);
+      for (let i = 0; i < pos.length; i += 3) {
+        start[i] = home[i] + randomRange(-320, 320);
+        start[i + 1] = home[i + 1] + randomRange(-320, 320);
+        start[i + 2] = home[i + 2] + randomRange(-420, 420);
       }
 
-      return group;
-    }
-
-    function getAllPieces(group) {
-      const pieces = [];
-      group.traverse(obj => {
-        if (obj.isMesh) pieces.push(obj);
-      });
-      return pieces;
-    }
-
-    async function integrateGroup(group) {
-      const pieces = getAllPieces(group);
-
-      pieces.forEach((piece, i) => {
-        piece.material.opacity = 0;
-        piece.position.x = piece.userData.home.x + randomRange(-170, 170);
-        piece.position.y = piece.userData.home.y + randomRange(-170, 170);
-        piece.position.z = piece.userData.home.z + randomRange(-180, 180);
-        piece.rotation.set(randomRange(-3.2, 3.2), randomRange(-3.2, 3.2), randomRange(-3.2, 3.2));
-
-        gsap.to(piece.position, {
-          x: piece.userData.home.x,
-          y: piece.userData.home.y,
-          z: piece.userData.home.z,
-          duration: 1.15,
-          delay: i * 0.0009,
-          ease: 'power3.out'
-        });
-
-        gsap.to(piece.rotation, {
-          x: 0, y: 0, z: 0,
-          duration: 1.05,
-          delay: i * 0.0009,
-          ease: 'power2.out'
-        });
-
-        gsap.to(piece.material, {
-          opacity: 1,
-          duration: 0.7,
-          delay: i * 0.0009,
-          ease: 'power2.out'
+      return new Promise((resolve) => {
+        gsap.to(state, {
+          t: 1,
+          duration,
+          ease: 'power3.out',
+          onUpdate: () => {
+            const t = state.t;
+            for (let i = 0; i < pos.length; i += 3) {
+              pos[i] = start[i] + (home[i] - start[i]) * t;
+              pos[i + 1] = start[i + 1] + (home[i + 1] - start[i + 1]) * t;
+              pos[i + 2] = start[i + 2] + (home[i + 2] - start[i + 2]) * t;
+            }
+            points.geometry.attributes.position.needsUpdate = true;
+          },
+          onComplete: resolve
         });
       });
-
-      await wait(1280);
     }
 
-    async function disintegrateGroup(group) {
-      const pieces = getAllPieces(group);
+    function animateDisintegrate(points, duration = 1.0) {
+      const pos = points.geometry.attributes.position.array;
+      const home = points.userData.home;
+      const state = { t: 0 };
 
-      pieces.forEach((piece, i) => {
-        gsap.to(piece.position, {
-          x: piece.userData.home.x + randomRange(-320, 320),
-          y: piece.userData.home.y + randomRange(-280, 280),
-          z: piece.userData.home.z + randomRange(-320, 320),
-          duration: 1.02,
-          delay: i * 0.0009,
-          ease: 'power2.in'
-        });
+      const end = new Float32Array(pos.length);
+      for (let i = 0; i < pos.length; i += 3) {
+        end[i] = home[i] + randomRange(-520, 520);
+        end[i + 1] = home[i + 1] + randomRange(-480, 480);
+        end[i + 2] = home[i + 2] + randomRange(-700, 700);
+      }
 
-        gsap.to(piece.rotation, {
-          x: randomRange(-5, 5),
-          y: randomRange(-5, 5),
-          z: randomRange(-5, 5),
-          duration: 1.02,
-          delay: i * 0.0009,
-          ease: 'power2.in'
-        });
-
-        gsap.to(piece.material, {
-          opacity: 0,
-          duration: 0.86,
-          delay: i * 0.0009,
-          ease: 'power1.in'
+      return new Promise((resolve) => {
+        gsap.to(state, {
+          t: 1,
+          duration,
+          ease: 'power2.in',
+          onUpdate: () => {
+            const t = state.t;
+            for (let i = 0; i < pos.length; i += 3) {
+              pos[i] = home[i] + (end[i] - home[i]) * t;
+              pos[i + 1] = home[i + 1] + (end[i + 1] - home[i + 1]) * t;
+              pos[i + 2] = home[i + 2] + (end[i + 2] - home[i + 2]) * t;
+            }
+            points.geometry.attributes.position.needsUpdate = true;
+            points.material.opacity = 1 - t;
+          },
+          onComplete: resolve
         });
       });
-
-      await wait(1130);
     }
 
-    async function playText(text) {
-      if (busy) return;
-      busy = true;
-      clearCurrentGroup();
+    function destroyPoints(points) {
+      scene.remove(points);
+      points.geometry.dispose();
+      points.material.dispose();
+    }
 
-      const group = createTextGroup(text);
-      currentGroup = group;
-      scene.add(group);
+    async function playPoints(points) {
+      scene.add(points);
+      points.material.opacity = 1;
 
-      await integrateGroup(group);
+      await animateIntegrate(points, 1.15);
       await wait(850);
-      await disintegrateGroup(group);
+      await animateDisintegrate(points, 1.05);
 
-      busy = false;
+      destroyPoints(points);
     }
 
-    async function playImage(imgEl) {
-      if (busy) return;
-      busy = true;
-      clearCurrentGroup();
-
-      const group = createImageGroup(imgEl);
-      currentGroup = group;
-      scene.add(group);
-
-      await integrateGroup(group);
-      await wait(850);
-      await disintegrateGroup(group);
-
-      busy = false;
-    }
-
-    function animate() {
-      requestAnimationFrame(animate);
-
-      if (currentGroup) {
-        currentGroup.rotation.y += 0.0017;
-        currentGroup.rotation.x += 0.0005;
-      }
-
+    function renderLoop() {
+      requestAnimationFrame(renderLoop);
       renderer.render(scene, camera);
     }
-    animate();
+    renderLoop();
 
-    window.addEventListener('load', async () => {
-      const img1 = document.getElementById('img1');
-      const img2 = document.getElementById('img2');
-
-      // Precalienta texturas para evitar “pantalla en blanco” inicial
-      new THREE.TextureLoader().load(img1.src, () => {});
-      new THREE.TextureLoader().load(img2.src, () => {});
+    async function run() {
+      const img1Canvas = await loadImageCanvas('image1.png', 540, 540);
+      const img2Canvas = await loadImageCanvas('image2.png', 540, 540);
 
       while (true) {
         if (!pageVisible) {
@@ -326,18 +306,52 @@
           continue;
         }
 
-        await playText(TEXTS[0]);
+        const t1 = makeTextCanvas(TEXTS[0], 1500, 360);
+        const pText1 = buildParticleObjectFromCanvas(t1.canvas, {
+          step: 5,
+          alphaMin: 20,
+          maxParticles: 7000,
+          spreadZ: 26,
+          scale: 0.9
+        });
+        await playPoints(pText1);
         await wait(220);
 
-        await playImage(img1);
+        const pImg1 = buildParticleObjectFromCanvas(img1Canvas.canvas, {
+          step: 4,
+          alphaMin: 12,
+          maxParticles: 9000,
+          spreadZ: 20,
+          scale: 1.35
+        });
+        await playPoints(pImg1);
         await wait(220);
 
-        await playText(TEXTS[1]);
+        const t2 = makeTextCanvas(TEXTS[1], 1500, 360);
+        const pText2 = buildParticleObjectFromCanvas(t2.canvas, {
+          step: 5,
+          alphaMin: 20,
+          maxParticles: 7000,
+          spreadZ: 26,
+          scale: 0.9
+        });
+        await playPoints(pText2);
         await wait(220);
 
-        await playImage(img2);
+        const pImg2 = buildParticleObjectFromCanvas(img2Canvas.canvas, {
+          step: 4,
+          alphaMin: 12,
+          maxParticles: 9000,
+          spreadZ: 20,
+          scale: 1.35
+        });
+        await playPoints(pImg2);
         await wait(220);
       }
+    }
+
+    window.addEventListener('load', () => {
+      run().catch((err) => console.error(err));
     });
   </script>
 </body>
