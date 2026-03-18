@@ -57,6 +57,66 @@
     const TEXTS = ["FOR MY BEAUTIFUL ING", "I LOVE YOU SO MUCH"];
 
     let pageVisible = !document.hidden;
+
+    function getResponsiveConfig() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const minSide = Math.min(w, h);
+
+      if (w <= 640) {
+        return {
+          textCanvasW: 900,
+          textCanvasH: 220,
+          textFontPx: 42,
+          textStep: 7,
+          textMaxParticles: 3800,
+          textScale: 0.66,
+          imageMaxSide: Math.min(340, minSide * 0.86),
+          imageStep: 6,
+          imageMaxParticles: 4200,
+          imageScale: 1.05,
+          sizeMultiplierMin: 2.1,
+          sizeMultiplierMax: 3.3,
+          pointPerspectiveFactor: 440.0
+        };
+      }
+
+      if (w <= 1024) {
+        return {
+          textCanvasW: 1200,
+          textCanvasH: 300,
+          textFontPx: 96,
+          textStep: 6,
+          textMaxParticles: 5600,
+          textScale: 0.78,
+          imageMaxSide: Math.min(470, minSide * 0.88),
+          imageStep: 5,
+          imageMaxParticles: 6200,
+          imageScale: 1.2,
+          sizeMultiplierMin: 2.6,
+          sizeMultiplierMax: 4.0,
+          pointPerspectiveFactor: 480.0
+        };
+      }
+
+      return {
+        textCanvasW: 1500,
+        textCanvasH: 360,
+        textFontPx: 124,
+        textStep: 5,
+        textMaxParticles: 7000,
+        textScale: 0.9,
+        imageMaxSide: 600,
+        imageStep: 4,
+        imageMaxParticles: 9000,
+        imageScale: 1.35,
+        sizeMultiplierMin: 3.2,
+        sizeMultiplierMax: 4.8,
+        pointPerspectiveFactor: 520.0
+      };
+    }
+
+    let responsiveConfig = getResponsiveConfig();
     document.addEventListener('visibilitychange', () => {
       pageVisible = !document.hidden;
     });
@@ -68,6 +128,7 @@
       camera.bottom = window.innerHeight / -2;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      responsiveConfig = getResponsiveConfig();
     });
 
     function randomRange(min, max) {
@@ -83,10 +144,10 @@
       return { canvas: cnv, ctx };
     }
 
-    function makeTextCanvas(text, w = 1400, h = 340) {
+    function makeTextCanvas(text, w, h, fontPx) {
       return makeRenderTexture((ctx, width, height) => {
         ctx.clearRect(0, 0, width, height);
-        ctx.font = '700 140px Roboto, Arial, sans-serif';
+        ctx.font = `700 ${fontPx}px Roboto, Arial, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#ffffff';
@@ -188,7 +249,7 @@
           void main() {
             vColor = color;
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = size * uPixelRatio * (520.0 / -mvPosition.z);
+            gl_PointSize = size * uPixelRatio * (${responsiveConfig.pointPerspectiveFactor.toFixed(1)} / -mvPosition.z);
             gl_Position = projectionMatrix * mvPosition;
           }
         `,
@@ -297,8 +358,8 @@
     renderLoop();
 
     async function run() {
-      const img1Canvas = await loadImageCanvas('image1.png', 540, 540);
-      const img2Canvas = await loadImageCanvas('image2.png', 540, 540);
+      const img1Canvas = await loadImageCanvas('image1.png', responsiveConfig.imageMaxSide, responsiveConfig.imageMaxSide);
+      const img2Canvas = await loadImageCanvas('image2.png', responsiveConfig.imageMaxSide, responsiveConfig.imageMaxSide);
 
       while (true) {
         if (!pageVisible) {
@@ -306,44 +367,56 @@
           continue;
         }
 
-        const t1 = makeTextCanvas(TEXTS[0], 1500, 360);
+        responsiveConfig = getResponsiveConfig();
+
+        const t1 = makeTextCanvas(
+          TEXTS[0],
+          responsiveConfig.textCanvasW,
+          responsiveConfig.textCanvasH,
+          responsiveConfig.textFontPx
+        );
         const pText1 = buildParticleObjectFromCanvas(t1.canvas, {
-          step: 5,
+          step: responsiveConfig.textStep,
           alphaMin: 20,
-          maxParticles: 7000,
+          maxParticles: responsiveConfig.textMaxParticles,
           spreadZ: 26,
-          scale: 0.9
+          scale: responsiveConfig.textScale
         });
         await playPoints(pText1);
         await wait(220);
 
         const pImg1 = buildParticleObjectFromCanvas(img1Canvas.canvas, {
-          step: 4,
+          step: responsiveConfig.imageStep,
           alphaMin: 12,
-          maxParticles: 9000,
+          maxParticles: responsiveConfig.imageMaxParticles,
           spreadZ: 20,
-          scale: 1.35
+          scale: responsiveConfig.imageScale
         });
         await playPoints(pImg1);
         await wait(220);
 
-        const t2 = makeTextCanvas(TEXTS[1], 1500, 360);
+        const t2 = makeTextCanvas(
+          TEXTS[1],
+          responsiveConfig.textCanvasW,
+          responsiveConfig.textCanvasH,
+          responsiveConfig.textFontPx
+        );
         const pText2 = buildParticleObjectFromCanvas(t2.canvas, {
-          step: 5,
+          step: responsiveConfig.textStep,
           alphaMin: 20,
-          maxParticles: 7000,
+          maxParticles: responsiveConfig.textMaxParticles,
           spreadZ: 26,
-          scale: 0.9
+          scale: responsiveConfig.textScale
         });
         await playPoints(pText2);
         await wait(220);
 
         const pImg2 = buildParticleObjectFromCanvas(img2Canvas.canvas, {
-          step: 4,
+          step: responsiveConfig.imageStep,
           alphaMin: 12,
-          maxParticles: 9000,
+          maxParticles: responsiveConfig.imageMaxParticles,
           spreadZ: 20,
-          scale: 1.35
+          scale: responsiveConfig.imageScale
         });
         await playPoints(pImg2);
         await wait(220);
